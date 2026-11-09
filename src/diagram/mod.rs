@@ -7,6 +7,7 @@ use crate::model::{Model, ModelError, TopologyModel};
 use crate::topology::{Topology, TopologyGenerator};
 pub use filter::DiagramSelector;
 use itertools::Itertools;
+pub use parts::DiagramPartsError;
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -18,6 +19,7 @@ use rayon::prelude::*;
 
 mod components;
 pub(crate) mod filter;
+mod parts;
 pub mod view;
 mod workspace;
 
