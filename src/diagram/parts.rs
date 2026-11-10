@@ -29,17 +29,36 @@ pub enum DiagramPartsError {
     /// The diagram has no internal vertex. The single-propagator diagram has no parts to build it from.
     NoVertices,
     /// A leg or propagator names a particle the model does not have.
-    UnknownParticle { line: String, particle: usize },
+    UnknownParticle {
+        line: String,
+        particle: usize,
+    },
     /// A vertex names an interaction the model does not have.
-    UnknownInteraction { vertex: usize, interaction: usize },
+    UnknownInteraction {
+        vertex: usize,
+        interaction: usize,
+    },
     /// A leg or propagator names a vertex index past the vertex list.
-    UnknownVertex { line: String, vertex: usize },
+    UnknownVertex {
+        line: String,
+        vertex: usize,
+    },
     /// A momentum vector does not have one entry per external leg.
-    MomentumLength { line: String, len: usize, n_ext: usize },
+    MomentumLength {
+        line: String,
+        len: usize,
+        n_ext: usize,
+    },
     /// A vertex lists a line index that is neither an external leg nor a propagator.
-    UnknownLine { vertex: usize, line: isize },
+    UnknownLine {
+        vertex: usize,
+        line: isize,
+    },
     /// A vertex lists a line whose own endpoints do not include that vertex.
-    NotAttached { vertex: usize, line: String },
+    NotAttached {
+        vertex: usize,
+        line: String,
+    },
     /// A line is listed by the wrong number of vertices: once for a leg, twice for a propagator.
     Incidence {
         line: String,
@@ -47,10 +66,21 @@ pub enum DiagramPartsError {
         expected: usize,
     },
     /// A propagator starts and ends on the same vertex.
-    SelfLoop { propagator: usize },
+    SelfLoop {
+        propagator: usize,
+    },
     /// The parts are not a tree: the propagator count is not one less than the vertex count, or the vertices are
     /// not connected.
-    NotATree { vertices: usize, propagators: usize },
+    /// A vertex's lines, read incoming, do not carry the particles its interaction names.
+    VertexParticles {
+        vertex: usize,
+        lines: Vec<String>,
+        interaction: Vec<String>,
+    },
+    NotATree {
+        vertices: usize,
+        propagators: usize,
+    },
 }
 
 impl fmt::Display for DiagramPartsError {
@@ -83,6 +113,16 @@ impl fmt::Display for DiagramPartsError {
                 write!(f, "{line} is listed by {listed} vertices instead of {expected}")
             }
             Self::SelfLoop { propagator } => write!(f, "propagator {propagator} starts and ends on one vertex"),
+            Self::VertexParticles {
+                vertex,
+                lines,
+                interaction,
+            } => write!(
+                f,
+                "vertex {vertex} joins [{}] but its interaction joins [{}]",
+                lines.join(", "),
+                interaction.join(", ")
+            ),
             Self::NotATree { vertices, propagators } => write!(
                 f,
                 "{vertices} vertices and {propagators} propagators do not form a connected tree"
@@ -99,8 +139,9 @@ impl Diagram {
     /// bridge and both symmetry factors are one.
     ///
     /// The parts are checked for consistency (indices in range, every line attached where the vertices say, a
-    /// connected tree), not against the model's interactions: a vertex whose particles do not match its
-    /// interaction is accepted, and draws as given.
+    /// connected tree), and every vertex's lines, read incoming, must carry exactly the particles its interaction
+    /// names: the view orders a vertex's lines by matching them against the interaction, and the sign and the
+    /// drawing both read that order.
     pub fn from_tree_parts(
         model: &Model,
         incoming_legs: Vec<Leg>,
@@ -120,7 +161,25 @@ impl Diagram {
             bridges,
             sign: 1,
         };
-        diagram.sign = DiagramView::new(model, &diagram, &Vec::new()).calculate_sign();
+        let labels = Vec::new();
+        let view = DiagramView::new(model, &diagram, &labels);
+        for vertex in view.vertices() {
+            let mut lines: Vec<String> = vertex
+                .propagators()
+                .map(|line| either::for_both!(line, l => l.particle().name().clone()))
+                .collect();
+            let mut interaction = vertex.interaction().particles.clone();
+            lines.sort_unstable();
+            interaction.sort_unstable();
+            if lines != interaction {
+                return Err(DiagramPartsError::VertexParticles {
+                    vertex: vertex.index,
+                    lines,
+                    interaction,
+                });
+            }
+        }
+        diagram.sign = view.calculate_sign();
         Ok(diagram)
     }
 
@@ -374,6 +433,13 @@ mod tests {
         assert!(matches!(
             rebuild(model, &unlisted),
             Err(DiagramPartsError::Incidence { .. })
+        ));
+
+        let mut relabelled = d.clone();
+        relabelled.incoming_legs[0].particle = model.get_particle_index("d").unwrap();
+        assert!(matches!(
+            rebuild(model, &relabelled),
+            Err(DiagramPartsError::VertexParticles { .. })
         ));
 
         let mut looped = d.clone();
